@@ -11,6 +11,7 @@ import numpy as np
 import networkx as nx
 import random
 import re
+import os
 from shapely.geometry import Polygon, Point
 
 
@@ -114,7 +115,7 @@ def cad2poly(pt_addr, save_addr, bd_marker=1):
     poly_set.pop(obd_index)  # inner boundary
     inner_node = set(sum(poly_set, []))
     # [3] determine the zone id of nodes
-    # outer node:1, inner node:2, mid_fluid:3
+    # outer node:1, inner node:2, mid_fluid:0 (default by Triangle)
     node_zid = [zid_1d(i, outer_set=outer_node, inner_set=inner_node) for i in list(range(1, pt_num+1))]
     # [4] determine the zone id of segements
     sg_zid = [zid_2d(edge_list[i], outer_set=outer_node) for i in list(range(0, sg_num))]
@@ -123,13 +124,13 @@ def cad2poly(pt_addr, save_addr, bd_marker=1):
     poly_file = open(save_addr, mode="a")
     # write summary for vertices
     poly_file.write("# Part of vertices\n")
-    poly_file.write(str(pt_num)+" 2 0 0 "+str(bd_marker)+"\n")
+    poly_file.write(str(pt_num)+" 2 0 "+str(bd_marker)+"\n")
     # write vertex i
     for i in range(1, pt_num+1):
         poly_file.write(str(i)+" "+" ".join(map(str, pt_set[i-1]))+" "+str(node_zid[i-1])+"\n")
     # write summary for segements
     poly_file.write("# Part of segements\n")
-    poly_file.write(str(sg_num)+" 0 "+str(bd_marker)+"\n")
+    poly_file.write(str(sg_num)+" "+str(bd_marker)+"\n")
     print("The number of segements is "+str(sg_num))
     # write segement i
     for i in range(1, sg_num+1):
@@ -153,16 +154,126 @@ def cad2poly(pt_addr, save_addr, bd_marker=1):
         h_count += 1
 
 
-def poly2msh(node_addr, poly_addr, ele_addr, save_addr):
-    node_i, node_x, node_y, node_marker = readTriangle(file=node_addr, kind="node")
-    poly_i, poly_s, poly_e, poly_marker = readTriangle(file=poly_addr, kind="poly")
-    ele_i, ele_n1, ele_n2, ele_n3 = readTriangle(file=ele_addr, kind="ele")
+def poly2msh(node_addr, edge_addr, ele_addr, save_addr):
+    # The format of .msh can be referred to
+    # http://oss.jishulink.com/upload/201609/1473134488450_msh%20file%20format.pdf
+    node_id, node_x, node_y, node_marker = readTriangle(file=node_addr, kind="node")
+    node_df = pd.DataFrame({"Id": node_id.astype(int), "X":node_x.astype(float),
+                            "Y":node_y.astype(float), "Node_marker": node_marker.astype(int)})
+    edge_id, edge_s, edge_e, edge_marker = readTriangle(file=edge_addr, kind="edge")
+    edge_df = pd.DataFrame({"Id": edge_id.astype(int), "Start": edge_s.astype(int),
+                            "End": edge_e.astype(int), "Edge_marker": edge_marker.astype(int)})
+    _, ele_n1, ele_n2, ele_n3 = readTriangle(file=ele_addr, kind="ele")
+    ele_df = pd.DataFrame({"Node1": ele_n1.astype(int), "Node2": ele_n2.astype(int), "Node3": ele_n3.astype(int)})
+    # for .msh file, outer zone:1, inner zone:2, mid zone:3 (same as Triangle's, 0 for summary)
+    node_mid = node_df[node_df["Node_marker"] == 0]
+    node_outer = node_df[node_df["Node_marker"] == 1]
+    node_inner = node_df[node_df["Node_marker"] == 2]
+    edge_mid = edge_df[edge_df["Edge_marker"] == 0]
+    edge_outer = edge_df[edge_df["Edge_marker"] == 1]
+    edge_inner = edge_df[edge_df["Edge_marker"] == 2]
+    le_mid = len(edge_mid)
+    le_outer = len(edge_outer)
+    le_inner = len(edge_inner)
+    # However, .msh uses first_id~last_id for one zone.
+    # So we need to rearrange ids of Node, Edge, Ele
+    # a dictionary of nodes where (key, value) = (old_id, new_id)
+    l_mid = len(node_mid)
+    l_outer = len(node_outer)
+    l_inner = len(node_inner)
+    outer_node_dict = {o:n for (o, n) in zip(node_outer["Id"], range(1, l_outer+1))}
+    inner_node_dict = {o: n for (o, n) in zip(node_inner["Id"], range(l_outer+1, l_outer+l_inner + 1))}
+    mid_node_dict = {o:n for (o, n) in zip(node_mid["Id"], range(l_outer+l_inner+1, l_outer+l_inner+l_mid+1))}
+    node_dict = {**outer_node_dict, **inner_node_dict, **mid_node_dict}
+    # reverse dict for the above dict
+    outer_node_r = {n: o for (o, n) in zip(node_outer["Id"], range(1, l_outer + 1))}
+    inner_node_r = {n: o for (o, n) in zip(node_inner["Id"], range(l_outer + 1, l_outer + l_inner+1))}
+    mid_node_r = {n: o for (o, n) in zip(node_mid["Id"], range(l_outer+l_inner+1, l_outer+l_inner+l_mid+1))}
+    node_r = {**outer_node_r, **inner_node_r, **mid_node_r}
+    # change the node index in the element_dataframe into new one
+    ele_df_new = ele_df.applymap(lambda x: node_dict[x])
+    # create .msh file
     msh_file = open(save_addr, mode="a")
     # Dimension
     msh_file.write("(2 2)\n")
-    # Nodes
-    msh_file.write("(10 (0 1 "+format(32,"x")+" 0))\n")
-    # Nodes on outer boundary ~ Zone id = 1
-    # zone id: 2, inner boundary
-    # zone id: 3, fluid
-    msh_file.write("(10 (1 1 "+format(32,"x")+" 0))\n")
+    # [1] Node summary
+    msh_file.write("(10 (0 1 "+format(l_outer+l_inner+l_mid,"x")+" 0))\n")
+    # nodes on outer boundary
+    msh_file.write("(10 (1 1 "+format(l_outer,"x")+" 1 2)(\n")
+    for i in range(0, l_outer):
+        msh_file.write(" ".join(map(str, node_outer.drop(columns=["Node_marker", "Id"]).iloc[i]))+"\n")
+    msh_file.write("))\n")
+    # nodes on inner boundary
+    msh_file.write("(10 (2 "+format(l_outer+1, "x")+" "+format(l_outer+l_inner, "x")+" 1 2)(\n")
+    for i in range(0, l_inner):
+        msh_file.write(" ".join(map(str, node_inner.drop(columns=["Node_marker", "Id"]).iloc[i]))
+                       +"\n")
+    msh_file.write("))\n")
+    # nodes in the middle
+    msh_file.write("(10 (3 "+format(l_outer+l_inner+1, "x")+" "+format(l_outer+l_inner+l_mid, "x") + " 1 2)(\n")
+    for i in range(0, l_mid):
+        msh_file.write(" ".join(map(str, node_mid.drop(columns=["Node_marker", "Id"]).iloc[i]))
+                       +"\n")
+    msh_file.write("))\n")
+    # [2] Face/Edge summary
+    msh_file.write("(13 (0 1 "+format(le_outer+le_inner+le_mid, "x")+" 0))\n")
+    # edges on outer boundary
+    # for wall condition, type = 3
+    msh_file.write("(13 (1 1 "+format(le_outer, "x")+" 3 2)(\n")
+    for i in range(0, le_outer):
+        # find the neighbour cell
+        # note that we should update the old index to the new index
+        ei_se = edge_outer.drop(columns=["Edge_marker", "Id"]).iloc[i]
+        ei_se_new = [node_dict[o_id] for o_id in ei_se]
+        neighbor_test = ele_df_new.apply(lambda x: {ei_se_new[0], ei_se_new[1]}.issubset(set(x)), axis=1)
+        neighbor_cell = node_r[np.where(neighbor_test)[0][0]]
+        # boundary edge has only one cell
+        msh_file.write(" ".join(map(lambda j: format(i, "x"), ei_se_new))+" "+format(neighbor_cell, "x")+" 0\n")
+    # edges on inner boundary
+    msh_file.write("(13 (2 "+format(le_outer+1, "x")+" "+format(le_outer+le_inner, "x")+" 3 2)(\n")
+    for i in range(0, le_inner):
+        ei_se = edge_inner.drop(columns=["Edge_marker", "Id"]).iloc[i]
+        ei_se_new = [node_dict[o_id] for o_id in ei_se]
+        neighbor_test = ele_df_new.apply(lambda x: {ei_se_new[0], ei_se_new[1]}.issubset(set(x)), axis=1)
+        neighbor_cell = node_r[np.where(neighbor_test)[0][0]]
+        msh_file.write(" ".join(map(lambda j: format(i, "x"), ei_se_new))+" "+format(neighbor_cell, "x")+" 0\n")
+    # edges in the middle
+    msh_file.write("(13 (3 "+format(le_outer+le_inner+1)+" "+format(le_outer+le_inner+le_mid, "x")+" 2 2)(\n")
+    for i in range(0, le_outer):
+        ei_se = edge_outer.drop(columns=["Edge_marker", "Id"]).iloc[i]
+        s_i = ei_se[0]
+        s_xy = np.array([node_outer["X"].iloc[s_i], node_outer["Y"].iloc[s_i]])
+        e_i = ei_se[1]
+        e_xy = np.array([node_outer["X"].iloc[e_i], node_outer["Y"].iloc[e_i]])
+        ei_se_new = [node_dict[o_id] for o_id in ei_se]
+        neighbor_test = ele_df_new.apply(lambda x: {ei_se_new[0], ei_se_new[1]}.issubset(set(x)), axis=1)
+        neighbor_cell_1 = node_r[np.where(neighbor_test)[0][0]]
+        neighbor_cell_2 = node_r[np.where(neighbor_test)[0][1]]
+        # use cross product to verify if s_i~e_i~c1 is clockwise
+        c1 = set(ele_df_new.iloc[neighbor_cell_1]).difference({s_i, e_i})
+        c1_xy = np.array([node_outer["X"].iloc[c1], node_outer["Y"].iloc[c1]])
+        z1_cross = np.cross(e_xy-s_xy, c1_xy-s_xy)
+        if z1_cross < 0:  # s_i~e_i~c1 is clockwise
+            msh_file.write(" ".join(map(lambda j: format(i, "x"), ei_se_new))+" "
+                +format(neighbor_cell_1, "x")+" "+format(neighbor_cell_2, "x")+"\n")
+        else:
+            msh_file.write(" ".join(map(lambda j: format(i, "x"), ei_se_new))+" "
+                            +format(neighbor_cell_2, "x") + " " + format(neighbor_cell_1, "x") + "\n")
+    # [3] Cell summary
+    l_cell = len(ele_df_new)
+    msh_file.write("(12 (0 1 " + format(l_cell, "x") + " 0\n")
+    msh_file.write("(12 (3 1 " + format(l_cell, "x") + " 1 0)(\n")
+    for i in range(0, l_cell):
+        msh_file.write("3\n")
+    msh_file.write("))\n")
+    # [4] Zone summary
+    # outer zone
+    msh_file.write("(45 (1 wall outer_boundary)())\n")
+    # inner zone
+    msh_file.write("(45 (2 wall inner_boundary)())\n")
+    # mid zone
+    msh_file.write("(45 (3 fluid mid_region)())")
+ 
+# cad2poly(pt_addr, save_addr, bd_marker=1)
+# os.system("triangle -epa100 XX.poly")
+# poly2msh(node_addr, edge_addr, ele_addr, save_addr)
