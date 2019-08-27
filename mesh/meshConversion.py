@@ -236,7 +236,7 @@ def poly2msh(node_addr, edge_addr, ele_addr, save_addr):
         n_id = set(ele_df_new[cell_id]).difference({ei_se_new[0], ei_se_new[1]})
         neighbor_cell = node_r[list(n_id)[0]]
         # boundary edge has only one cell
-        msh_file.write(" ".join(map(lambda j: format(i, "x"), ei_se_new))+" "+format(neighbor_cell, "x")+" 0\n")
+        msh_file.write(" ".join(map(lambda j: format(j, "x"), ei_se_new))+" "+format(neighbor_cell, "x")+" 0\n")
     # edges on inner boundary
     msh_file.write("(13 (2 "+format(le_outer+1, "x")+" "+format(le_outer+le_inner, "x")+" 3 2)(\n")
     edge_inner = edge_inner.drop(columns=["Edge_marker", "Id"])
@@ -248,7 +248,7 @@ def poly2msh(node_addr, edge_addr, ele_addr, save_addr):
         cell_id = np.where(neighbor_test)[0][0]
         n_id = set(ele_df_new[cell_id]).difference({ei_se_new[0], ei_se_new[1]})
         neighbor_cell = node_r[list(n_id)[0]]
-        msh_file.write(" ".join(map(lambda j: format(i, "x"), ei_se_new))+" "+format(neighbor_cell, "x")+" 0\n")
+        msh_file.write(" ".join(map(lambda j: format(j, "x"), ei_se_new))+" "+format(neighbor_cell, "x")+" 0\n")
     # edges in the middle
     msh_file.write("(13 (3 "+format(le_outer+le_inner+1)+" "+format(le_outer+le_inner+le_mid, "x")+" 2 2)(\n")
     edge_mid = edge_mid.drop(columns=["Edge_marker", "Id"])
@@ -272,10 +272,10 @@ def poly2msh(node_addr, edge_addr, ele_addr, save_addr):
         c1_xy = np.array([node_outer["X"].iloc[c1], node_outer["Y"].iloc[c1]])
         z1_cross = np.cross(e_xy-s_xy, c1_xy-s_xy)
         if z1_cross < 0:  # s_i~e_i~c1 is clockwise
-            msh_file.write(" ".join(map(lambda j: format(i, "x"), ei_se_new))+" "
+            msh_file.write(" ".join(map(lambda j: format(j, "x"), ei_se_new))+" "
                 +format(neighbor_cell_1, "x")+" "+format(neighbor_cell_2, "x")+"\n")
         else:
-            msh_file.write(" ".join(map(lambda j: format(i, "x"), ei_se_new))+" "
+            msh_file.write(" ".join(map(lambda j: format(j, "x"), ei_se_new))+" "
                             +format(neighbor_cell_2, "x") + " " + format(neighbor_cell_1, "x") + "\n")
     # [3] Cell summary
     l_cell = len(ele_df_new)
@@ -291,11 +291,6 @@ def poly2msh(node_addr, edge_addr, ele_addr, save_addr):
     msh_file.write("(45 (2 wall inner_boundary)())\n")
     # mid zone
     msh_file.write("(45 (3 fluid mid_region)())")
-
-
-#cad2poly(pt_addr="mesh/Case_simple.csv", save_addr="WanQuan.poly", bd_marker=1)
-poly2msh(node_addr="mesh/WanQuan.1.node", edge_addr="mesh/WanQuan.1.edge", ele_addr="mesh/WanQuan.1.ele",
-         save_addr="WanQuan.msh")
  
 # cad2poly(pt_addr, save_addr, bd_marker=1)
 # os.system("triangle -epa100 XX.poly")
