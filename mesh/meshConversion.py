@@ -181,9 +181,9 @@ def poly2msh(node_addr, edge_addr, ele_addr, save_addr):
     l_mid = len(node_mid)
     l_outer = len(node_outer)
     l_inner = len(node_inner)
-    outer_node_dict = {o:n for (o, n) in zip(node_outer["Id"], range(1, l_outer+1))}
+    outer_node_dict = {o: n for (o, n) in zip(node_outer["Id"], range(1, l_outer+1))}
     inner_node_dict = {o: n for (o, n) in zip(node_inner["Id"], range(l_outer+1, l_outer+l_inner + 1))}
-    mid_node_dict = {o:n for (o, n) in zip(node_mid["Id"], range(l_outer+l_inner+1, l_outer+l_inner+l_mid+1))}
+    mid_node_dict = {o: n for (o, n) in zip(node_mid["Id"], range(l_outer+l_inner+1, l_outer+l_inner+l_mid+1))}
     node_dict = {**outer_node_dict, **inner_node_dict, **mid_node_dict}
     # reverse dict for the above dict
     outer_node_r = {n: o for (o, n) in zip(node_outer["Id"], range(1, l_outer + 1))}
@@ -191,7 +191,8 @@ def poly2msh(node_addr, edge_addr, ele_addr, save_addr):
     mid_node_r = {n: o for (o, n) in zip(node_mid["Id"], range(l_outer+l_inner+1, l_outer+l_inner+l_mid+1))}
     node_r = {**outer_node_r, **inner_node_r, **mid_node_r}
     # change the node index in the element_dataframe into new one
-    ele_df_new = ele_df.applymap(lambda x: node_dict[x])
+    f_on = np.vectorize(lambda x: node_dict[x])
+    ele_df_new = f_on(ele_df)
     # create .msh file
     msh_file = open(save_addr, mode="a")
     # Dimension
@@ -200,55 +201,72 @@ def poly2msh(node_addr, edge_addr, ele_addr, save_addr):
     msh_file.write("(10 (0 1 "+format(l_outer+l_inner+l_mid,"x")+" 0))\n")
     # nodes on outer boundary
     msh_file.write("(10 (1 1 "+format(l_outer,"x")+" 1 2)(\n")
+    node_outer = node_outer.drop(columns=["Node_marker", "Id"])
     for i in range(0, l_outer):
-        msh_file.write(" ".join(map(str, node_outer.drop(columns=["Node_marker", "Id"]).iloc[i]))+"\n")
+        msh_file.write(" ".join(map(str, node_outer.iloc[i]))+"\n")
     msh_file.write("))\n")
     # nodes on inner boundary
     msh_file.write("(10 (2 "+format(l_outer+1, "x")+" "+format(l_outer+l_inner, "x")+" 1 2)(\n")
+    node_inner = node_inner.drop(columns=["Node_marker", "Id"])
     for i in range(0, l_inner):
-        msh_file.write(" ".join(map(str, node_inner.drop(columns=["Node_marker", "Id"]).iloc[i]))
-                       +"\n")
+        msh_file.write(" ".join(map(str, node_inner.iloc[i]))+"\n")
     msh_file.write("))\n")
     # nodes in the middle
     msh_file.write("(10 (3 "+format(l_outer+l_inner+1, "x")+" "+format(l_outer+l_inner+l_mid, "x") + " 1 2)(\n")
+    node_mid = node_mid.drop(columns=["Node_marker", "Id"])
     for i in range(0, l_mid):
-        msh_file.write(" ".join(map(str, node_mid.drop(columns=["Node_marker", "Id"]).iloc[i]))
-                       +"\n")
+        msh_file.write(" ".join(map(str, node_mid.iloc[i]))+"\n")
     msh_file.write("))\n")
     # [2] Face/Edge summary
     msh_file.write("(13 (0 1 "+format(le_outer+le_inner+le_mid, "x")+" 0))\n")
     # edges on outer boundary
     # for wall condition, type = 3
     msh_file.write("(13 (1 1 "+format(le_outer, "x")+" 3 2)(\n")
+    edge_outer = edge_outer.drop(columns=["Edge_marker", "Id"])
     for i in range(0, le_outer):
         # find the neighbour cell
         # note that we should update the old index to the new index
-        ei_se = edge_outer.drop(columns=["Edge_marker", "Id"]).iloc[i]
+        ei_se = edge_outer.iloc[i]
         ei_se_new = [node_dict[o_id] for o_id in ei_se]
-        neighbor_test = ele_df_new.apply(lambda x: {ei_se_new[0], ei_se_new[1]}.issubset(set(x)), axis=1)
-        neighbor_cell = node_r[np.where(neighbor_test)[0][0]]
+        # find the cell which the edge belongs to
+        f_neighbor = np.vectorize(lambda x, y, z: {ei_se_new[0], ei_se_new[1]}.issubset({x, y, z}))
+        neighbor_test = f_neighbor(ele_df_new[:, 0], ele_df_new[:, 1], ele_df_new[:, 2])
+        cell_id = np.where(neighbor_test)[0][0]
+        # get the third node new id
+        n_id = set(ele_df_new[cell_id]).difference({ei_se_new[0], ei_se_new[1]})
+        neighbor_cell = node_r[list(n_id)[0]]
         # boundary edge has only one cell
         msh_file.write(" ".join(map(lambda j: format(i, "x"), ei_se_new))+" "+format(neighbor_cell, "x")+" 0\n")
     # edges on inner boundary
     msh_file.write("(13 (2 "+format(le_outer+1, "x")+" "+format(le_outer+le_inner, "x")+" 3 2)(\n")
+    edge_inner = edge_inner.drop(columns=["Edge_marker", "Id"])
     for i in range(0, le_inner):
-        ei_se = edge_inner.drop(columns=["Edge_marker", "Id"]).iloc[i]
+        ei_se = edge_inner.iloc[i]
         ei_se_new = [node_dict[o_id] for o_id in ei_se]
-        neighbor_test = ele_df_new.apply(lambda x: {ei_se_new[0], ei_se_new[1]}.issubset(set(x)), axis=1)
-        neighbor_cell = node_r[np.where(neighbor_test)[0][0]]
+        f_neighbor = np.vectorize(lambda x, y, z: {ei_se_new[0], ei_se_new[1]}.issubset({x, y, z}))
+        neighbor_test = f_neighbor(ele_df_new[:, 0], ele_df_new[:, 1], ele_df_new[:, 2])
+        cell_id = np.where(neighbor_test)[0][0]
+        n_id = set(ele_df_new[cell_id]).difference({ei_se_new[0], ei_se_new[1]})
+        neighbor_cell = node_r[list(n_id)[0]]
         msh_file.write(" ".join(map(lambda j: format(i, "x"), ei_se_new))+" "+format(neighbor_cell, "x")+" 0\n")
     # edges in the middle
     msh_file.write("(13 (3 "+format(le_outer+le_inner+1)+" "+format(le_outer+le_inner+le_mid, "x")+" 2 2)(\n")
+    edge_mid = edge_mid.drop(columns=["Edge_marker", "Id"])
     for i in range(0, le_outer):
-        ei_se = edge_outer.drop(columns=["Edge_marker", "Id"]).iloc[i]
+        ei_se = edge_mid.iloc[i]
         s_i = ei_se[0]
         s_xy = np.array([node_outer["X"].iloc[s_i], node_outer["Y"].iloc[s_i]])
         e_i = ei_se[1]
         e_xy = np.array([node_outer["X"].iloc[e_i], node_outer["Y"].iloc[e_i]])
         ei_se_new = [node_dict[o_id] for o_id in ei_se]
-        neighbor_test = ele_df_new.apply(lambda x: {ei_se_new[0], ei_se_new[1]}.issubset(set(x)), axis=1)
-        neighbor_cell_1 = node_r[np.where(neighbor_test)[0][0]]
-        neighbor_cell_2 = node_r[np.where(neighbor_test)[0][1]]
+        f_neighbor = np.vectorize(lambda x, y, z: {ei_se_new[0], ei_se_new[1]}.issubset({x, y, z}))
+        neighbor_test = f_neighbor(ele_df_new[:, 0], ele_df_new[:, 1], ele_df_new[:, 2])
+        cell1_id = np.where(neighbor_test)[0][0]
+        n1_id = set(ele_df_new[cell1_id]).difference({ei_se_new[0], ei_se_new[1]})
+        neighbor_cell_1 = node_r[list(n1_id)[0]]
+        cell2_id = np.where(neighbor_test)[0][1]
+        n2_id = set(ele_df_new[cell2_id]).difference({ei_se_new[0], ei_se_new[1]})
+        neighbor_cell_2 = node_r[list(n2_id)[0]]
         # use cross product to verify if s_i~e_i~c1 is clockwise
         c1 = set(ele_df_new.iloc[neighbor_cell_1]).difference({s_i, e_i})
         c1_xy = np.array([node_outer["X"].iloc[c1], node_outer["Y"].iloc[c1]])
@@ -273,6 +291,11 @@ def poly2msh(node_addr, edge_addr, ele_addr, save_addr):
     msh_file.write("(45 (2 wall inner_boundary)())\n")
     # mid zone
     msh_file.write("(45 (3 fluid mid_region)())")
+
+
+#cad2poly(pt_addr="mesh/Case_simple.csv", save_addr="WanQuan.poly", bd_marker=1)
+poly2msh(node_addr="mesh/WanQuan.1.node", edge_addr="mesh/WanQuan.1.edge", ele_addr="mesh/WanQuan.1.ele",
+         save_addr="WanQuan.msh")
  
 # cad2poly(pt_addr, save_addr, bd_marker=1)
 # os.system("triangle -epa100 XX.poly")
