@@ -234,8 +234,9 @@ def poly2msh(node_addr, edge_addr, ele_addr, save_addr):
         cell_id = np.where(neighbor_test)[0][0]
         # get the third node new id
         n_id = set(ele_df_new[cell_id]).difference({ei_se_new[0], ei_se_new[1]})
-        neighbor_cell = node_r[list(n_id)[0]]
+        neighbor_cell = list(n_id)[0]
         # boundary edge has only one cell
+        # write the new node index
         msh_file.write(" ".join(map(lambda j: format(j, "x"), ei_se_new))+" "+format(neighbor_cell, "x")+" 0\n")
     # edges on inner boundary
     msh_file.write("(13 (2 "+format(le_outer+1, "x")+" "+format(le_outer+le_inner, "x")+" 3 2)(\n")
@@ -247,36 +248,34 @@ def poly2msh(node_addr, edge_addr, ele_addr, save_addr):
         neighbor_test = f_neighbor(ele_df_new[:, 0], ele_df_new[:, 1], ele_df_new[:, 2])
         cell_id = np.where(neighbor_test)[0][0]
         n_id = set(ele_df_new[cell_id]).difference({ei_se_new[0], ei_se_new[1]})
-        neighbor_cell = node_r[list(n_id)[0]]
+        neighbor_cell = list(n_id)[0]
         msh_file.write(" ".join(map(lambda j: format(j, "x"), ei_se_new))+" "+format(neighbor_cell, "x")+" 0\n")
     # edges in the middle
     msh_file.write("(13 (3 "+format(le_outer+le_inner+1)+" "+format(le_outer+le_inner+le_mid, "x")+" 2 2)(\n")
     edge_mid = edge_mid.drop(columns=["Edge_marker", "Id"])
-    for i in range(0, le_outer):
+    for i in range(0, le_mid):
         ei_se = edge_mid.iloc[i]
         s_i = ei_se[0]
-        s_xy = np.array([node_outer["X"].iloc[s_i], node_outer["Y"].iloc[s_i]])
+        # node index in edges is old but node index in elements is new
+        s_xy = np.array([node_df["X"].iloc[s_i-1], node_df["Y"].iloc[s_i-1]])
         e_i = ei_se[1]
-        e_xy = np.array([node_outer["X"].iloc[e_i], node_outer["Y"].iloc[e_i]])
+        e_xy = np.array([node_df["X"].iloc[e_i-1], node_df["Y"].iloc[e_i-1]])
         ei_se_new = [node_dict[o_id] for o_id in ei_se]
         f_neighbor = np.vectorize(lambda x, y, z: {ei_se_new[0], ei_se_new[1]}.issubset({x, y, z}))
         neighbor_test = f_neighbor(ele_df_new[:, 0], ele_df_new[:, 1], ele_df_new[:, 2])
         cell1_id = np.where(neighbor_test)[0][0]
         n1_id = set(ele_df_new[cell1_id]).difference({ei_se_new[0], ei_se_new[1]})
-        neighbor_cell_1 = node_r[list(n1_id)[0]]
         cell2_id = np.where(neighbor_test)[0][1]
-        n2_id = set(ele_df_new[cell2_id]).difference({ei_se_new[0], ei_se_new[1]})
-        neighbor_cell_2 = node_r[list(n2_id)[0]]
         # use cross product to verify if s_i~e_i~c1 is clockwise
-        c1 = set(ele_df_new.iloc[neighbor_cell_1]).difference({s_i, e_i})
-        c1_xy = np.array([node_outer["X"].iloc[c1], node_outer["Y"].iloc[c1]])
+        c1 = node_r[list(n1_id)[0]]  # old index with the aim of X, Y searching
+        c1_xy = np.array([node_df["X"].iloc[c1-1], node_df["Y"].iloc[c1-1]])
         z1_cross = np.cross(e_xy-s_xy, c1_xy-s_xy)
         if z1_cross < 0:  # s_i~e_i~c1 is clockwise
             msh_file.write(" ".join(map(lambda j: format(j, "x"), ei_se_new))+" "
-                +format(neighbor_cell_1, "x")+" "+format(neighbor_cell_2, "x")+"\n")
+                +format(cell1_id, "x")+" "+format(cell2_id, "x")+"\n")
         else:
             msh_file.write(" ".join(map(lambda j: format(j, "x"), ei_se_new))+" "
-                            +format(neighbor_cell_2, "x") + " " + format(neighbor_cell_1, "x") + "\n")
+                            +format(cell2_id, "x") + " " + format(cell1_id, "x") + "\n")
     # [3] Cell summary
     l_cell = len(ele_df_new)
     msh_file.write("(12 (0 1 " + format(l_cell, "x") + " 0\n")
