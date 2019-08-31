@@ -190,9 +190,35 @@ def poly2msh(node_addr, edge_addr, ele_addr, save_addr):
     inner_node_r = {n: o for (o, n) in zip(node_inner["Id"], range(l_outer + 1, l_outer + l_inner+1))}
     mid_node_r = {n: o for (o, n) in zip(node_mid["Id"], range(l_outer+l_inner+1, l_outer+l_inner+l_mid+1))}
     node_r = {**outer_node_r, **inner_node_r, **mid_node_r}
-    # change the node index in the element_dataframe into new one
+    # change the node index in the element_dataframe and edge_dataframe into new one
     f_on = np.vectorize(lambda x: node_dict[x])
     ele_df_new = f_on(ele_df)
+    # a dictionary where (key, value) = (edge_id, [node1_new_id, node2_new_id])
+    outer_en = np.array([[node_dict[n1_id], node_dict[n2_id]] for (n1_id, n2_id)
+                         in zip(edge_outer["Start"], edge_outer["End"])])
+    inner_en = np.array([[node_dict[n1_id], node_dict[n2_id]] for (n1_id, n2_id)
+                         in zip(edge_inner["Start"], edge_inner["End"])])
+    mid_en = np.array([[node_dict[n1_id], node_dict[n2_id]] for (n1_id, n2_id)
+                       in zip(edge_mid["Start"], edge_mid["End"])])
+
+    # find the cell index which the edge belongs to
+    def edge_cell(node_list):
+        nonlocal ele_df_new
+        edge_n1 = node_list[0]
+        edge_n2 = node_list[1]
+        f_neighbor = np.vectorize(lambda x, y, z: {edge_n1, edge_n2}.issubset({x, y, z}))
+        neighbor_test = f_neighbor(ele_df_new[:, 0], ele_df_new[:, 1], ele_df_new[:, 2])
+        cell_id = np.where(neighbor_test)[0]
+        # boundary edge has only one cell
+        if len(cell_id) == 1:
+            return np.array([*node_list, *cell_id, 0])
+        else:
+            return np.array([*node_list, *cell_id])
+    # When the vectorized function returns ndarray, we specify a signature
+    outer_ec = np.array([edge_cell(x) for x in outer_en])
+    inner_ec = np.array([edge_cell(x) for x in inner_en])
+    mid_ec = np.array([edge_cell(x) for x in mid_en])
+
     # create .msh file
     msh_file = open(save_addr, mode="a")
     # Dimension
@@ -222,60 +248,27 @@ def poly2msh(node_addr, edge_addr, ele_addr, save_addr):
     # edges on outer boundary
     # for wall condition, type = 3
     msh_file.write("(13 (1 1 "+format(le_outer, "x")+" 3 2)(\n")
-    edge_outer = edge_outer.drop(columns=["Edge_marker", "Id"])
     for i in range(0, le_outer):
-        # find the neighbour cell
-        # note that we should update the old index to the new index
-        ei_se = edge_outer.iloc[i]
-        ei_se_new = [node_dict[o_id] for o_id in ei_se]
-        # find the cell which the edge belongs to
-        f_neighbor = np.vectorize(lambda x, y, z: {ei_se_new[0], ei_se_new[1]}.issubset({x, y, z}))
-        neighbor_test = f_neighbor(ele_df_new[:, 0], ele_df_new[:, 1], ele_df_new[:, 2])
-        cell_id = np.where(neighbor_test)[0][0]
-        # get the third node new id
-        n_id = set(ele_df_new[cell_id]).difference({ei_se_new[0], ei_se_new[1]})
-        neighbor_cell = list(n_id)[0]
-        # boundary edge has only one cell
-        # write the new node index
-        msh_file.write(" ".join(map(lambda j: format(j, "x"), ei_se_new))+" "+format(neighbor_cell, "x")+" 0\n")
+        msh_file.write(" ".join(map(lambda j: format(j, "x"), outer_ec[i]))+"\n")
     # edges on inner boundary
     msh_file.write("(13 (2 "+format(le_outer+1, "x")+" "+format(le_outer+le_inner, "x")+" 3 2)(\n")
-    edge_inner = edge_inner.drop(columns=["Edge_marker", "Id"])
     for i in range(0, le_inner):
-        ei_se = edge_inner.iloc[i]
-        ei_se_new = [node_dict[o_id] for o_id in ei_se]
-        f_neighbor = np.vectorize(lambda x, y, z: {ei_se_new[0], ei_se_new[1]}.issubset({x, y, z}))
-        neighbor_test = f_neighbor(ele_df_new[:, 0], ele_df_new[:, 1], ele_df_new[:, 2])
-        cell_id = np.where(neighbor_test)[0][0]
-        n_id = set(ele_df_new[cell_id]).difference({ei_se_new[0], ei_se_new[1]})
-        neighbor_cell = list(n_id)[0]
-        msh_file.write(" ".join(map(lambda j: format(j, "x"), ei_se_new))+" "+format(neighbor_cell, "x")+" 0\n")
+        msh_file.write(" ".join(map(lambda j: format(j, "x"), inner_ec[i]))+" 0\n")
     # edges in the middle
-    msh_file.write("(13 (3 "+format(le_outer+le_inner+1)+" "+format(le_outer+le_inner+le_mid, "x")+" 2 2)(\n")
-    edge_mid = edge_mid.drop(columns=["Edge_marker", "Id"])
+    msh_file.write("(13 (3 "+format(le_outer+le_inner+1, "x")+" "+format(le_outer+le_inner+le_mid, "x")+" 2 2)(\n")
+
+    xy_1 = np.array([[node_df["X"].iloc[id_1 - 1], node_df["Y"].iloc[id_1 - 1]] for id_1 in mid_ec[0]])
+    xy_2 = np.array([[node_df["X"].iloc[id_2 - 1], node_df["Y"].iloc[id_2 - 1]] for id_2 in mid_ec[1]])
+    c_1 = [node_r[c_n1] for c_n1 in mid_ec[2]]
+    c1_xy = [[node_df["X"].iloc[c - 1], node_df["Y"].iloc[c - 1]] for c in c_1]
+    z1_cross = np.cross(xy_2 - xy_1, c1_xy - xy_1)
+    mid_temp = np.copy(mid_ec)
+    mid_temp.T[[2,3]] = mid_temp.T[[3,2]]
+    mid_ec_m = np.where(z1_cross<0, mid_ec, mid_temp)
+
     for i in range(0, le_mid):
-        ei_se = edge_mid.iloc[i]
-        s_i = ei_se[0]
-        # node index in edges is old but node index in elements is new
-        s_xy = np.array([node_df["X"].iloc[s_i-1], node_df["Y"].iloc[s_i-1]])
-        e_i = ei_se[1]
-        e_xy = np.array([node_df["X"].iloc[e_i-1], node_df["Y"].iloc[e_i-1]])
-        ei_se_new = [node_dict[o_id] for o_id in ei_se]
-        f_neighbor = np.vectorize(lambda x, y, z: {ei_se_new[0], ei_se_new[1]}.issubset({x, y, z}))
-        neighbor_test = f_neighbor(ele_df_new[:, 0], ele_df_new[:, 1], ele_df_new[:, 2])
-        cell1_id = np.where(neighbor_test)[0][0]
-        n1_id = set(ele_df_new[cell1_id]).difference({ei_se_new[0], ei_se_new[1]})
-        cell2_id = np.where(neighbor_test)[0][1]
-        # use cross product to verify if s_i~e_i~c1 is clockwise
-        c1 = node_r[list(n1_id)[0]]  # old index with the aim of X, Y searching
-        c1_xy = np.array([node_df["X"].iloc[c1-1], node_df["Y"].iloc[c1-1]])
-        z1_cross = np.cross(e_xy-s_xy, c1_xy-s_xy)
-        if z1_cross < 0:  # s_i~e_i~c1 is clockwise
-            msh_file.write(" ".join(map(lambda j: format(j, "x"), ei_se_new))+" "
-                +format(cell1_id, "x")+" "+format(cell2_id, "x")+"\n")
-        else:
-            msh_file.write(" ".join(map(lambda j: format(j, "x"), ei_se_new))+" "
-                            +format(cell2_id, "x") + " " + format(cell1_id, "x") + "\n")
+        msh_file.write(" ".join(map(lambda j: format(j, "x"), mid_ec_m[i]))+"\n")
+
     # [3] Cell summary
     l_cell = len(ele_df_new)
     msh_file.write("(12 (0 1 " + format(l_cell, "x") + " 0\n")
