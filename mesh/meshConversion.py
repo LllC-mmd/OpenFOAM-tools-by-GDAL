@@ -250,10 +250,12 @@ def poly2msh(node_addr, edge_addr, ele_addr, save_addr):
     msh_file.write("(13 (1 1 "+format(le_outer, "x")+" 3 2)(\n")
     for i in range(0, le_outer):
         msh_file.write(" ".join(map(lambda j: format(j, "x"), outer_ec[i]))+"\n")
+    msh_file.write("))\n")
     # edges on inner boundary
     msh_file.write("(13 (2 "+format(le_outer+1, "x")+" "+format(le_outer+le_inner, "x")+" 3 2)(\n")
     for i in range(0, le_inner):
         msh_file.write(" ".join(map(lambda j: format(j, "x"), inner_ec[i]))+" 0\n")
+    msh_file.write("))\n")
     # edges in the middle
     msh_file.write("(13 (3 "+format(le_outer+le_inner+1, "x")+" "+format(le_outer+le_inner+le_mid, "x")+" 2 2)(\n")
 
@@ -268,14 +270,15 @@ def poly2msh(node_addr, edge_addr, ele_addr, save_addr):
 
     for i in range(0, le_mid):
         msh_file.write(" ".join(map(lambda j: format(j, "x"), mid_ec_m[i]))+"\n")
-
+    msh_file.write("))\n")
     # [3] Cell summary
     l_cell = len(ele_df_new)
-    msh_file.write("(12 (0 1 " + format(l_cell, "x") + " 0\n")
+    msh_file.write("(12 (0 1 " + format(l_cell, "x") + " 0))\n")
     msh_file.write("(12 (3 1 " + format(l_cell, "x") + " 1 0)(\n")
+    # For 2D cell, 1 - tri, 2 - quad
     for i in range(0, l_cell):
-        msh_file.write("3\n")
-    msh_file.write("))\n")
+        msh_file.write("1 ")
+    msh_file.write("\n))\n")
     # [4] Zone summary
     # outer zone
     msh_file.write("(45 (1 wall outer_boundary)())\n")
