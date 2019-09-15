@@ -202,22 +202,78 @@ def poly2msh(node_addr, edge_addr, ele_addr, save_addr):
                        in zip(edge_mid["Start"], edge_mid["End"])])
 
     # find the cell index which the edge belongs to
-    def edge_cell(node_list):
+    def edge_cell_bd(node_list):
         nonlocal ele_df_new
         edge_n1 = node_list[0]
         edge_n2 = node_list[1]
-        f_neighbor = np.vectorize(lambda x, y, z: {edge_n1, edge_n2}.issubset({x, y, z}))
+        edge_nset = {edge_n1, edge_n2}
+        f_neighbor = np.vectorize(lambda x, y, z: edge_nset.issubset({x, y, z}))
         neighbor_test = f_neighbor(ele_df_new[:, 0], ele_df_new[:, 1], ele_df_new[:, 2])
-        cell_id = np.where(neighbor_test)[0]
+        # cell index begins from 1, index = row id + 1
+        cell_df_row = np.where(neighbor_test)[0]+1
+        # transform the id of the row where the 3rd node is located at into the 3rd node id
+        cell_3rdnode = set(ele_df_new[cell_df_row[0] - 1]) - edge_nset
         # boundary edge has only one cell
-        if len(cell_id) == 1:
-            return np.array([*node_list, *cell_id, 0])
-        else:
-            return np.array([*node_list, *cell_id])
-    # When the vectorized function returns ndarray, we specify a signature
-    outer_ec = np.array([edge_cell(x) for x in outer_en])
-    inner_ec = np.array([edge_cell(x) for x in inner_en])
-    mid_ec = np.array([edge_cell(x) for x in mid_en])
+        return np.array([*node_list, *cell_df_row, 0, *cell_3rdnode])
+
+    def edge_cell_mid(node_list):
+        nonlocal ele_df_new
+        edge_n1 = node_list[0]
+        edge_n2 = node_list[1]
+        edge_nset = {edge_n1, edge_n2}
+        f_neighbor = np.vectorize(lambda x, y, z: edge_nset.issubset({x, y, z}))
+        neighbor_test = f_neighbor(ele_df_new[:, 0], ele_df_new[:, 1], ele_df_new[:, 2])
+        cell_df_row = np.where(neighbor_test)[0]+1
+        cell_3rdnode = set(ele_df_new[cell_df_row[0]-1]) - edge_nset
+        return np.array([*node_list, *cell_df_row, *cell_3rdnode])
+
+    # When the vectorized function returns ndarray, we should specify a signature
+    outer_ec = np.array([edge_cell_bd(x) for x in outer_en])
+    inner_ec = np.array([edge_cell_bd(x) for x in inner_en])
+    mid_ec = np.array([edge_cell_mid(x) for x in mid_en])
+
+    # for the boundary edge, the order of node index should be adjusted by the Right Hand's Rule
+    # transform into the original ID, row id = "ID" - 1
+    xy_1 = np.array([[node_df["X"].iloc[node_r[id_1] - 1], node_df["Y"].iloc[node_r[id_1] - 1]] for id_1 in outer_ec[:, 0]])
+    xy_2 = np.array([[node_df["X"].iloc[node_r[id_2] - 1], node_df["Y"].iloc[node_r[id_2] - 1]] for id_2 in outer_ec[:, 1]])
+    c_1 = [node_r[c_n1] for c_n1 in outer_ec[:, 4]]
+    c1_xy = np.array([[node_df["X"].iloc[c - 1], node_df["Y"].iloc[c - 1]] for c in c_1])
+    # using cross product to verifying the RHR
+    z1_cross = np.cross(xy_2 - xy_1, c1_xy - xy_1)
+    z1_cross = z1_cross.reshape((len(z1_cross), 1))
+    z1_cross = np.concatenate((z1_cross, z1_cross), axis=1)
+    # create a candidate
+    outer_temp = np.copy(outer_ec[:, 0:4])
+    outer_temp.T[[0, 1]] = outer_temp.T[[1, 0]]
+    outer_ec_m = np.where(z1_cross < 0, outer_ec[:, 0:2], outer_temp[:, 0:2])
+    outer_ec_m = np.concatenate((outer_ec_m, outer_ec[:, 2:4]), axis=1)
+    del outer_temp
+
+    xy_1 = np.array([[node_df["X"].iloc[node_r[id_1] - 1], node_df["Y"].iloc[node_r[id_1] - 1]] for id_1 in inner_ec[:, 0]])
+    xy_2 = np.array([[node_df["X"].iloc[node_r[id_2] - 1], node_df["Y"].iloc[node_r[id_2] - 1]] for id_2 in inner_ec[:, 1]])
+    c_1 = [node_r[c_n1] for c_n1 in inner_ec[:, 4]]
+    c1_xy = np.array([[node_df["X"].iloc[c - 1], node_df["Y"].iloc[c - 1]] for c in c_1])
+    z1_cross = np.cross(xy_2 - xy_1, c1_xy - xy_1)
+    z1_cross = z1_cross.reshape((len(z1_cross), 1))
+    z1_cross = np.concatenate((z1_cross, z1_cross), axis=1)
+    inner_temp = np.copy(inner_ec[:, 0:4])
+    inner_temp.T[[0, 1]] = inner_temp.T[[1, 0]]
+    inner_ec_m = np.where(z1_cross < 0, inner_ec[:, 0:2], inner_temp[:, 0:2])
+    inner_ec_m = np.concatenate((inner_ec_m, inner_ec[:, 2:4]), axis=1)
+    del inner_temp
+
+    # for the middle edge, the order of cell index should be adjusted by the Right Hand's Rule
+    xy_1 = np.array([[node_df["X"].iloc[node_r[id_1] - 1], node_df["Y"].iloc[node_r[id_1] - 1]] for id_1 in mid_ec[:, 0]])
+    xy_2 = np.array([[node_df["X"].iloc[node_r[id_2] - 1], node_df["Y"].iloc[node_r[id_2] - 1]] for id_2 in mid_ec[:, 1]])
+    c_1 = [node_r[c_n1] for c_n1 in mid_ec[:, 4]]
+    c1_xy = np.array([[node_df["X"].iloc[c - 1], node_df["Y"].iloc[c - 1]] for c in c_1])
+    z1_cross = np.cross(xy_2 - xy_1, c1_xy - xy_1)
+    z1_cross = z1_cross.reshape((len(z1_cross), 1))
+    z1_cross = np.concatenate((z1_cross, z1_cross), axis=1)
+    mid_temp = np.copy(mid_ec[:, 0:4])
+    mid_temp.T[[2, 3]] = mid_temp.T[[3, 2]]
+    mid_ec_m = np.where(z1_cross < 0, mid_ec[:, 2:4], mid_temp[:, 2:4])
+    mid_ec_m = np.concatenate((mid_ec[:, 0:2], mid_ec_m), axis=1)
 
     # create .msh file
     msh_file = open(save_addr, mode="a")
@@ -249,25 +305,15 @@ def poly2msh(node_addr, edge_addr, ele_addr, save_addr):
     # for wall condition, type = 3
     msh_file.write("(13 (1 1 "+format(le_outer, "x")+" 3 2)(\n")
     for i in range(0, le_outer):
-        msh_file.write(" ".join(map(lambda j: format(j, "x"), outer_ec[i]))+"\n")
+        msh_file.write(" ".join(map(lambda j: format(j, "x"), outer_ec_m[i]))+"\n")
     msh_file.write("))\n")
     # edges on inner boundary
     msh_file.write("(13 (2 "+format(le_outer+1, "x")+" "+format(le_outer+le_inner, "x")+" 3 2)(\n")
     for i in range(0, le_inner):
-        msh_file.write(" ".join(map(lambda j: format(j, "x"), inner_ec[i]))+" 0\n")
+        msh_file.write(" ".join(map(lambda j: format(j, "x"), inner_ec_m[i]))+"\n")
     msh_file.write("))\n")
     # edges in the middle
     msh_file.write("(13 (3 "+format(le_outer+le_inner+1, "x")+" "+format(le_outer+le_inner+le_mid, "x")+" 2 2)(\n")
-
-    xy_1 = np.array([[node_df["X"].iloc[id_1 - 1], node_df["Y"].iloc[id_1 - 1]] for id_1 in mid_ec[0]])
-    xy_2 = np.array([[node_df["X"].iloc[id_2 - 1], node_df["Y"].iloc[id_2 - 1]] for id_2 in mid_ec[1]])
-    c_1 = [node_r[c_n1] for c_n1 in mid_ec[2]]
-    c1_xy = [[node_df["X"].iloc[c - 1], node_df["Y"].iloc[c - 1]] for c in c_1]
-    z1_cross = np.cross(xy_2 - xy_1, c1_xy - xy_1)
-    mid_temp = np.copy(mid_ec)
-    mid_temp.T[[2,3]] = mid_temp.T[[3,2]]
-    mid_ec_m = np.where(z1_cross<0, mid_ec, mid_temp)
-
     for i in range(0, le_mid):
         msh_file.write(" ".join(map(lambda j: format(j, "x"), mid_ec_m[i]))+"\n")
     msh_file.write("))\n")
