@@ -331,7 +331,7 @@ def poly2msh(node_addr, edge_addr, ele_addr, save_addr):
     # inner zone
     msh_file.write("(45 (2 wall inner_boundary)())\n")
     # mid zone
-    msh_file.write("(45 (3 fluid mid_region)())")
+    # msh_file.write("(45 (3 fluid mid_region)())")
  
 # cad2poly(pt_addr, save_addr, bd_marker=1)
 # os.system("triangle -epa100 XX.poly")
